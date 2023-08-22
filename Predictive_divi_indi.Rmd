@@ -1,0 +1,227 @@
+---
+title: "predictive model divi"
+author: "Mahbub"
+date: "8/5/2023"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+library(tidyverse)
+library(survey)
+```
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+library(descr)
+library(questionr)
+library(knitr)
+```
+
+```{r message=FALSE, warning=FALSE}
+library(rsample)
+library(randomForest)
+library(ranger)
+library(caret)
+#library(h2o)
+library(survey)
+library(RCurl)
+library(xrf)
+```
+
+```{r}
+library(haven)
+library(tidyverse)
+library(survey)
+library(rpart)
+library(rpart.plot)
+library(partykit)
+library(party)
+library(caret)
+```
+
+```{r}
+Final_data <- read_csv("final.csv")
+Final_data <- na.omit(Final_data)
+```
+
+```{r}
+Final_data$brick<- as.factor(Final_data$brick)
+Final_data$mud <- as.factor(Final_data$mud)
+Final_data$wood <- as.factor(Final_data$wood)
+Final_data$electricity <- as.factor(Final_data$electricity)
+Final_data$Sex_hh <- as.factor(Final_data$Sex_hh)
+Final_data$agri <- as.factor(Final_data$agri)
+Final_data$non_agri <- as.factor(Final_data$non_agri)
+Final_data$daylobour <- as.factor(Final_data$daylobour)
+Final_data$salarywage <- as.factor(Final_data$salarywage)
+Final_data$salarywage <- as.factor(Final_data$salarywage)
+Final_data$safety_nate <- as.factor(Final_data$safety_nate)
+Final_data$per_in <- as.factor(Final_data$per_in)
+Final_data$K_in <- as.factor(Final_data$K_in)
+Final_data$div_indi <- as.factor(Final_data$div_indi)
+```
+
+
+```{r}
+RHS = 
+"urbrural+ F_15_49+M_1_15+
+                       M_15_49+F_1_15+F_GE50+M_GE50+Sex_hh+Age_hh+cost+s7aq06+brick+mud+wood+
+                       electricity+agri+non_agri+daylobour+salarywage+safety_nate"
+formula01 = as.formula(paste("per_in~", RHS))
+formula02 = as.formula(paste("K_in~", RHS))
+formula03 = as.formula(paste("div_indi~", RHS))
+
+```
+
+
+
+
+```{r}
+k <- 10  ## k-fold cross validation
+Eval.noInt.test <- matrix(data = NA, nrow = k, ncol = 3)
+ROC.noInt.test <- rep(0, times = k)
+Eval.noInt.test1 <- matrix(data = NA, nrow = k, ncol = 3)
+ROC.noInt.test1 <- rep(0, times = k)
+Eval.noInt.test2 <- matrix(data = NA, nrow = k, ncol = 3)
+ROC.noInt.test2 <- rep(0, times = k)
+Eval.noInt.test3 <- matrix(data = NA, nrow = k, ncol = 3)
+ROC.noInt.test3 <- rep(0, times = k)
+```
+
+
+
+
+
+
+
+
+```{r message=FALSE, warning=FALSE}
+# Randomly select 90% of observations to create training set matrix,
+# using remaining 10% for test set; k-fold, where k = 10.
+for(i in 1:k) {
+  set.alloc <- sample(x = 1:nrow(Final_data), size = 0.9 * nrow(Final_data))
+  
+  train.set <- Final_data[set.alloc, ]
+  test.set <- Final_data[-set.alloc, ]
+  
+  # Fit without-interaction model on training data
+  train.des1 <- survey::svydesign(id=~hhold, weights = ~hhwgt, 
+                        strata = ~psu,nest = T, data = Final_data)
+  train.glm.noint <- survey::svyglm(formula = formula03, design = train.des1, 
+                                    na.action = na.omit, family = quasibinomial)
+  train.tree.noint<-rpart::rpart(formula=formula03,data = Final_data,weights =hhwgt,method = "class")
+  train.random.noint<-randomForest(formula=formula03,weights=Final_data$hhwgt,data=Final_data,mtry=4,ntree=3000)
+  
+  FinaL_new<- Final_data %>% select(div_indi, urbrural, F_15_49, M_1_15,
+                             M_15_49, F_1_15, F_GE50, M_GE50, Sex_hh, Age_hh, cost, s7aq06, brick, mud, wood,
+                             electricity, agri, non_agri, daylobour, salarywage,safety_nate) 
+
+Final <- FinaL_new[complete.cases(FinaL_new),]
+m_xrf <- xrf(div_indi ~ ., Final, family = 'binomial', 
+                 xgb_control = list(nrounds = 100, max_depth = 3))
+
+ pred.rul <- predict(m_xrf,test.set,type = "class")
+
+ 
+  pred.tr<-predict(train.tree.noint,test.set,type = "class")
+  
+  pred.random<-predict(train.random.noint,test.set,type = "class")
+  
+  # Create fitted values based on  models, but using test data
+  test.set.noInt.pred = ifelse(
+    predict(train.glm.noint,newdata = test.set, type = "response") > 0.5,
+    1,
+    0
+  )
+  
+  # Create confusion matrix for no-interaction
+  tab.noInt <- table(Predicted = test.set.noInt.pred, Observed = test.set$div_indi)
+  
+  
+  conf.mat.noInt <- caret::confusionMatrix(tab.noInt)
+  conf.mat.noInt1<-caret::confusionMatrix(pred.tr,test.set$div_indi)
+   conf.mat.noInt2<-caret::confusionMatrix(pred.random,test.set$div_indi)
+  tab.noInt3 <- table(Predicted = pred.rul, Observed = test.set$div_indi)
+   conf.mat.noInt3  <- caret::confusionMatrix(tab.noInt3)
+  
+  Outsample.noInt.res <- c(conf.mat.noInt$overall["Accuracy"], 
+                           conf.mat.noInt$byClass["Sensitivity"],
+                           conf.mat.noInt$byClass["Specificity"])
+  Outsample.noInt.res1 <- c(conf.mat.noInt1$overall["Accuracy"], 
+                           conf.mat.noInt1$byClass["Sensitivity"],
+                           conf.mat.noInt1$byClass["Specificity"])
+   Outsample.noInt.res2 <- c(conf.mat.noInt2$overall["Accuracy"], 
+                           conf.mat.noInt2$byClass["Sensitivity"],
+                           conf.mat.noInt2$byClass["Specificity"])
+ 
+     Outsample.noInt.res3 <- c(conf.mat.noInt3$overall["Accuracy"], 
+                           conf.mat.noInt3$byClass["Sensitivity"],
+                           conf.mat.noInt3$byClass["Specificity"])
+     
+  Eval.noInt.test[i, ] <- Outsample.noInt.res
+  Eval.noInt.test1[i, ] <- Outsample.noInt.res1
+  Eval.noInt.test2[i, ] <- Outsample.noInt.res2
+   Eval.noInt.test3[i, ] <- Outsample.noInt.res3
+  
+  ## For ROC curve: without interaction
+  noInt.out.predict <- predict(train.glm.noint, newdata = test.set, type = "response")
+  ROC.noInt.outsample <- pROC::roc(test.set$div_indi ~ noInt.out.predict,
+                                   plot = F, print.auc = F)
+  
+  ROC.noInt.test[i] <- ROC.noInt.outsample$auc[1]
+  
+  noInt.out.predict1 <- predict(train.tree.noint, newdata = test.set, type = "prob")
+  ROC.noInt.outsample1 <- pROC::roc(test.set$div_indi ~ noInt.out.predict1[,2],
+                                   plot = F, print.auc = F)
+  
+  ROC.noInt.test1[i] <- ROC.noInt.outsample1$auc[1]
+  
+  noInt.out.predict2 <- predict(train.random.noint, newdata = test.set, type = "prob")
+  ROC.noInt.outsample2 <- pROC::roc(test.set$div_indi ~ noInt.out.predict2[,2],
+                                   plot = F, print.auc = F)
+  
+  ROC.noInt.test2[i] <- ROC.noInt.outsample2$auc[1]
+  noInt.out.predict3 <- predict(m_xrf, newdata = test.set, type = "response")
+  ROC.noInt.outsample3 <- pROC::roc(test.set$div_indi ~ noInt.out.predict3[,1],
+                                   plot = F, print.auc = F)
+  
+  ROC.noInt.test3[i] <- ROC.noInt.outsample3$auc[1]
+  
+  
+  
+  
+}
+```
+
+```{r}
+apply(Eval.noInt.test, MARGIN = 2, FUN = mean)
+apply(Eval.noInt.test1, MARGIN = 2, FUN = mean)
+apply(Eval.noInt.test2, MARGIN = 2, FUN = mean)
+
+
+```
+
+```{r}
+mean(ROC.noInt.test)
+mean(ROC.noInt.test1)
+mean(ROC.noInt.test2)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
